@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import mutagen
 import argparse
+from huggingface_hub import snapshot_download
 
 # === Clean filename from special characters ===
 def sanitize_filename(name):
@@ -60,31 +61,49 @@ def transcribe_video(video_path, transcript_path):
 # === 2. Text translation ===
 def translate_text(texts, output_path):
     try:
-        from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+        from transformers import M2M100ForConditionalGeneration, M2M100Tokenizer
     except ImportError:
         raise ImportError("❌ Required packages not found. Install them: pip install transformers sentencepiece")
 
     print("🌐 Loading translation model...")
-    model_name = "facebook/nllb-200-distilled-600M"
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+    model_name = "facebook/m2m100_418M"
+    
+    # Set custom cache directory if specified
+    cache_dir = os.getenv('HF_CACHE_DIR', os.path.expanduser('~/.cache/huggingface/hub'))
+    print(f"📥 Downloading model to: {cache_dir}")
+    
+    # Download model with progress bar
+    snapshot_download(
+        repo_id=model_name,
+        cache_dir=cache_dir,
+        local_files_only=False,
+        resume_download=True
+    )
+    
+    print("🔄 Loading tokenizer and model...")
+    tokenizer = M2M100Tokenizer.from_pretrained(model_name, cache_dir=cache_dir)
+    model = M2M100ForConditionalGeneration.from_pretrained(model_name, cache_dir=cache_dir)
     
     print("🔁 Translating text...")
     translations = []
     for i, text in enumerate(texts):
         try:
-            # Tokenize the text
-            inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
+            # Set source and target languages
+            tokenizer.src_lang = "en"
+            tokenizer.tgt_lang = "ru"
             
-            # Translate from English (eng_Latn) to Russian (rus_Cyrl)
-            translated_tokens = model.generate(
-                **inputs,
-                forced_bos_token_id=tokenizer.lang_code_to_id["rus_Cyrl"],
+            # Tokenize the text
+            encoded = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
+            
+            # Generate translation
+            generated_tokens = model.generate(
+                **encoded,
+                forced_bos_token_id=tokenizer.get_lang_id("ru"),
                 max_length=512
             )
             
             # Decode the translation
-            translated = tokenizer.batch_decode(translated_tokens, skip_special_tokens=True)[0]
+            translated = tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)[0]
             
             print(f"Original: {text[:50]}...")
             print(f"Translated: {translated[:50]}...")
