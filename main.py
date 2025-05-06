@@ -14,10 +14,10 @@ import argparse
 from huggingface_hub import snapshot_download
 import torch
 import numpy as np
-import soundfile as sf
-from fairseq import checkpoint_utils
-import fairseq
-import torchaudio
+# import soundfile as sf
+# from fairseq import checkpoint_utils
+# import fairseq
+# import torchaudio
 
 # === Clean filename from special characters ===
 def sanitize_filename(name):
@@ -52,12 +52,66 @@ def adjust_audio_speed(input_path, output_path, target_duration):
         shutil.copy(input_path, output_path)
         return False
 
+# === Language Support ===
+SUPPORTED_LANGUAGES = {
+    'en': 'English',
+    'ru': 'Russian',
+    'es': 'Spanish',
+    'fr': 'French',
+    'de': 'German',
+    'it': 'Italian',
+    'pt': 'Portuguese',
+    'ja': 'Japanese',
+    'ko': 'Korean',
+    'zh': 'Chinese'
+}
+
+# Language code mapping for different models
+LANGUAGE_CODES = {
+    'whisper': {
+        'en': 'en',
+        'ru': 'ru',
+        'es': 'es',
+        'fr': 'fr',
+        'de': 'de',
+        'it': 'it',
+        'pt': 'pt',
+        'ja': 'ja',
+        'ko': 'ko',
+        'zh': 'zh'
+    },
+    'm2m100': {
+        'en': 'en_XX',
+        'ru': 'ru_RU',
+        'es': 'es_XX',
+        'fr': 'fr_XX',
+        'de': 'de_DE',
+        'it': 'it_IT',
+        'pt': 'pt_XX',
+        'ja': 'ja_XX',
+        'ko': 'ko_KR',
+        'zh': 'zh_CN'
+    },
+    'gtts': {
+        'en': 'en',
+        'ru': 'ru',
+        'es': 'es',
+        'fr': 'fr',
+        'de': 'de',
+        'it': 'it',
+        'pt': 'pt',
+        'ja': 'ja',
+        'ko': 'ko',
+        'zh': 'zh'
+    }
+}
+
 # === 1. Video transcription with Whisper ===
-def transcribe_video(video_path, transcript_path):
+def transcribe_video(video_path, transcript_path, source_lang='en'):
     print("🔍 Loading Whisper model...")
     model = whisper.load_model("base")
     print("📼 Starting transcription...")
-    result = model.transcribe(video_path)
+    result = model.transcribe(video_path, language=LANGUAGE_CODES['whisper'][source_lang])
     with open(transcript_path, "w", encoding="utf-8") as f:
         for seg in result['segments']:
             f.write(f"[{seg['start']:.2f} - {seg['end']:.2f}] {seg['text']}\n")
@@ -65,7 +119,7 @@ def transcribe_video(video_path, transcript_path):
     return result['segments']
 
 # === 2. Text translation ===
-def translate_text(texts, output_path):
+def translate_text(texts, output_path, source_lang='en', target_lang='ru'):
     try:
         from transformers import M2M100ForConditionalGeneration, M2M100Tokenizer
     except ImportError:
@@ -95,8 +149,8 @@ def translate_text(texts, output_path):
     for i, text in enumerate(texts):
         try:
             # Set source and target languages
-            tokenizer.src_lang = "en"
-            tokenizer.tgt_lang = "ru"
+            tokenizer.src_lang = LANGUAGE_CODES['m2m100'][source_lang]
+            tokenizer.tgt_lang = LANGUAGE_CODES['m2m100'][target_lang]
             
             # Tokenize the text
             encoded = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
@@ -104,15 +158,15 @@ def translate_text(texts, output_path):
             # Generate translation
             generated_tokens = model.generate(
                 **encoded,
-                forced_bos_token_id=tokenizer.get_lang_id("ru"),
+                forced_bos_token_id=tokenizer.get_lang_id(LANGUAGE_CODES['m2m100'][target_lang]),
                 max_length=512
             )
             
             # Decode the translation
             translated = tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)[0]
             
-            print(f"Original: {text[:50]}...")
-            print(f"Translated: {translated[:50]}...")
+            print(f"Original ({SUPPORTED_LANGUAGES[source_lang]}): {text[:50]}...")
+            print(f"Translated ({SUPPORTED_LANGUAGES[target_lang]}): {translated[:50]}...")
             
         except Exception as e:
             print(f"⚠️ Translation error for segment {i}: {e}")
@@ -190,7 +244,7 @@ class RVCConverter:
 def generate_tts_audio(text, output_path, lang='ru', use_rvc=True):
     try:
         # Generate initial TTS
-        tts = gTTS(text, lang=lang)
+        tts = gTTS(text, lang=LANGUAGE_CODES['gtts'][lang])
         temp_path = output_path + ".temp.mp3"
         tts.save(temp_path)
         
@@ -249,7 +303,7 @@ def replace_audio(video_path, audio_path, output_path):
     os.system(command)
 
 # === Main function ===
-def main(video_path):
+def main(video_path, source_lang='en', target_lang='ru', use_rvc=True):
     check_ffmpeg()
 
     input_path = Path(video_path)
@@ -274,7 +328,6 @@ def main(video_path):
         with open(transcript_file, "r", encoding="utf-8") as f:
             for line in f:
                 if "] " in line:
-                    # Parse timing and text from line like "[0.00 - 2.50] Some text"
                     timing, text = line.split("] ", 1)
                     start, end = timing.strip("[]").split(" - ")
                     segments.append({
@@ -284,7 +337,7 @@ def main(video_path):
                     })
     else:
         print("🔍 Transcribing video...")
-        segments = transcribe_video(video_path, transcript_file)
+        segments = transcribe_video(video_path, transcript_file, source_lang)
 
     texts = [seg['text'] for seg in segments]
 
@@ -295,7 +348,7 @@ def main(video_path):
             translations = [line.strip() for line in f.readlines()]
     else:
         print("🌐 Translating text...")
-        translations = translate_text(texts, translated_file)
+        translations = translate_text(texts, translated_file, source_lang, target_lang)
 
     # === TTS with timing ===
     expected_audio_files = [str(tts_chunks_dir / f"{base_name}_{i:04d}.mp3") for i in range(len(translations))]
@@ -325,9 +378,14 @@ def main(video_path):
 
 # === Entry point ===
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Translate video from English to Russian')
+    parser = argparse.ArgumentParser(description='Translate video between different languages')
     parser.add_argument('video_path', help='Path to the video file to translate')
+    parser.add_argument('--source-lang', '-s', choices=SUPPORTED_LANGUAGES.keys(), default='en',
+                      help='Source language (default: en)')
+    parser.add_argument('--target-lang', '-t', choices=SUPPORTED_LANGUAGES.keys(), default='ru',
+                      help='Target language (default: ru)')
     parser.add_argument('--no-rvc', action='store_true', help='Disable RVC voice conversion')
     args = parser.parse_args()
     
-    main(args.video_path)
+    print(f"🌍 Translating from {SUPPORTED_LANGUAGES[args.source_lang]} to {SUPPORTED_LANGUAGES[args.target_lang]}")
+    main(args.video_path, args.source_lang, args.target_lang, not args.no_rvc)
