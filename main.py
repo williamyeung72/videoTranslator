@@ -12,6 +12,12 @@ import re
 import mutagen
 import argparse
 from huggingface_hub import snapshot_download
+import torch
+import numpy as np
+import soundfile as sf
+from fairseq import checkpoint_utils
+import fairseq
+import torchaudio
 
 # === Clean filename from special characters ===
 def sanitize_filename(name):
@@ -143,11 +149,61 @@ def generate_tts_with_timing(texts, output_dir, base_name, segments):
 
     return audio_files
 
-# === 4. TTS with gTTS ===
-def generate_tts_audio(text, output_path, lang='ru'):
+# === RVC Voice Conversion ===
+class RVCConverter:
+    def __init__(self, model_path, device="cuda"):
+        self.device = device if torch.cuda.is_available() else "cpu"
+        print(f"🎵 Using device: {self.device}")
+        
+        # Load RVC model
+        self.model = self.load_rvc_model(model_path)
+        
+    def load_rvc_model(self, model_path):
+        # Load your RVC model here
+        # This is a placeholder - you'll need to implement the actual model loading
+        # based on your specific RVC model format
+        pass
+        
+    def convert_voice(self, audio_path, output_path):
+        try:
+            # Load audio
+            audio, sr = torchaudio.load(audio_path)
+            audio = audio.to(self.device)
+            
+            # Process with RVC
+            # This is a placeholder - implement actual RVC processing
+            converted_audio = self.process_with_rvc(audio)
+            
+            # Save converted audio
+            torchaudio.save(output_path, converted_audio.cpu(), sr)
+            return True
+        except Exception as e:
+            print(f"⚠️ RVC conversion error: {e}")
+            return False
+            
+    def process_with_rvc(self, audio):
+        # Placeholder for RVC processing
+        # Implement actual RVC processing here
+        return audio
+
+# === 4. TTS with gTTS and RVC ===
+def generate_tts_audio(text, output_path, lang='ru', use_rvc=True):
     try:
+        # Generate initial TTS
         tts = gTTS(text, lang=lang)
-        tts.save(output_path)
+        temp_path = output_path + ".temp.mp3"
+        tts.save(temp_path)
+        
+        if use_rvc:
+            # Convert with RVC
+            rvc = RVCConverter("path/to/your/rvc/model")
+            success = rvc.convert_voice(temp_path, output_path)
+            if not success:
+                shutil.copy(temp_path, output_path)
+            os.remove(temp_path)
+        else:
+            shutil.move(temp_path, output_path)
+            
         return True
     except Exception as e:
         print(f"⚠️ TTS error for \"{text[:30]}...\": {e}")
@@ -271,6 +327,7 @@ def main(video_path):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Translate video from English to Russian')
     parser.add_argument('video_path', help='Path to the video file to translate')
+    parser.add_argument('--no-rvc', action='store_true', help='Disable RVC voice conversion')
     args = parser.parse_args()
     
     main(args.video_path)
