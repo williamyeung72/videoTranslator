@@ -106,6 +106,48 @@ LANGUAGE_CODES = {
     }
 }
 
+# === Voice Selection ===
+VOICE_OPTIONS = {
+    'gtts': {
+        'en': {'male': 'en', 'female': 'en'},
+        'ru': {'male': 'ru', 'female': 'ru'},
+        'es': {'male': 'es', 'female': 'es'},
+        'fr': {'male': 'fr', 'female': 'fr'},
+        'de': {'male': 'de', 'female': 'de'},
+        'it': {'male': 'it', 'female': 'it'},
+        'pt': {'male': 'pt', 'female': 'pt'},
+        'ja': {'male': 'ja', 'female': 'ja'},
+        'ko': {'male': 'ko', 'female': 'ko'},
+        'zh': {'male': 'zh', 'female': 'zh'}
+    },
+    'rvc': {
+        'male': {
+            'en': 'models/rvc/male/en',
+            'ru': 'models/rvc/male/ru',
+            'es': 'models/rvc/male/es',
+            'fr': 'models/rvc/male/fr',
+            'de': 'models/rvc/male/de',
+            'it': 'models/rvc/male/it',
+            'pt': 'models/rvc/male/pt',
+            'ja': 'models/rvc/male/ja',
+            'ko': 'models/rvc/male/ko',
+            'zh': 'models/rvc/male/zh'
+        },
+        'female': {
+            'en': 'models/rvc/female/en',
+            'ru': 'models/rvc/female/ru',
+            'es': 'models/rvc/female/es',
+            'fr': 'models/rvc/female/fr',
+            'de': 'models/rvc/female/de',
+            'it': 'models/rvc/female/it',
+            'pt': 'models/rvc/female/pt',
+            'ja': 'models/rvc/female/ja',
+            'ko': 'models/rvc/female/ko',
+            'zh': 'models/rvc/female/zh'
+        }
+    }
+}
+
 # === 1. Video transcription with Whisper ===
 def transcribe_video(video_path, transcript_path, source_lang='en'):
     print("🔍 Loading Whisper model...")
@@ -244,18 +286,19 @@ class RVCConverter:
         return audio
 
 # === 4. TTS with gTTS and RVC ===
-def generate_tts_audio(text, output_path, lang='ru', use_rvc=True):
+def generate_tts_audio(text, output_path, lang='ru', use_rvc=True, voice_gender='female', rvc_model=None):
     try:
         # Generate initial TTS
-        tts = gTTS(text, lang=LANGUAGE_CODES['gtts'][lang])
+        tts = gTTS(text, lang=VOICE_OPTIONS['gtts'][lang][voice_gender])
         temp_path = output_path + ".temp.mp3"
         tts.save(temp_path)
         
-        if use_rvc:
+        if use_rvc and rvc_model:
             # Convert with RVC
-            rvc = RVCConverter("path/to/your/rvc/model")
+            rvc = RVCConverter(rvc_model)
             success = rvc.convert_voice(temp_path, output_path)
             if not success:
+                print("⚠️ RVC conversion failed, using original TTS audio")
                 shutil.copy(temp_path, output_path)
             os.remove(temp_path)
         else:
@@ -306,7 +349,7 @@ def replace_audio(video_path, audio_path, output_path):
     os.system(command)
 
 # === Main function ===
-def main(video_path, source_lang='en', target_lang='ru', use_rvc=True):
+def main(video_path, source_lang='en', target_lang='ru', use_rvc=True, voice_gender='female', rvc_model=None):
     check_ffmpeg()
 
     input_path = Path(video_path)
@@ -388,7 +431,23 @@ if __name__ == "__main__":
     parser.add_argument('--target-lang', '-t', choices=SUPPORTED_LANGUAGES.keys(), default='ru',
                       help='Target language (default: ru)')
     parser.add_argument('--no-rvc', action='store_true', help='Disable RVC voice conversion')
+    parser.add_argument('--voice-gender', '-g', choices=['male', 'female'], default='female',
+                      help='Voice gender (default: female)')
+    parser.add_argument('--rvc-model', '-m', help='Path to custom RVC model (optional)')
     args = parser.parse_args()
     
     print(f"🌍 Translating from {SUPPORTED_LANGUAGES[args.source_lang]} to {SUPPORTED_LANGUAGES[args.target_lang]}")
-    main(args.video_path, args.source_lang, args.target_lang, not args.no_rvc)
+    print(f"🎤 Using {'RVC' if not args.no_rvc else 'gTTS'} with {args.voice_gender} voice")
+    
+    # Get RVC model path
+    rvc_model = None
+    if not args.no_rvc:
+        if args.rvc_model:
+            rvc_model = args.rvc_model
+        else:
+            rvc_model = VOICE_OPTIONS['rvc'][args.voice_gender][args.target_lang]
+            if not os.path.exists(rvc_model):
+                print(f"⚠️ RVC model not found at {rvc_model}, falling back to gTTS")
+                args.no_rvc = True
+    
+    main(args.video_path, args.source_lang, args.target_lang, not args.no_rvc, args.voice_gender, rvc_model)
