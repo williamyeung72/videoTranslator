@@ -12,6 +12,7 @@ A tool for translating videos between different languages with automatic transcr
   - [RVC Options](#rvc-options)
 - [How It Works](#how-it-works)
 - [Models and Voices](#models-and-voices)
+  - [Model Downloads](#model-downloads)
   - [Whisper Models](#whisper-models)
   - [Voice Selection](#voice-selection)
 - [Supported Languages](#supported-languages)
@@ -72,6 +73,15 @@ Basic usage:
 2. Run the script:
 ```bash
 python main.py "path/to/video.mp4"
+
+# or for better transcribe and translate
+python main.py '.\output\The_Best_Way_to_Learn_Linux\The Best Way to Learn Linux.webm' -s en -t ru -g male -w medium -tr m2m100_1.2B
+
+# or for using RVC models
+python main.py your_video.mp4 --rvc-model "models/rvc/male/ru/drevnyirus.pth -s en -t ru -g male -w medium -tr m2m100_1.2B"
+
+# Use GPU if available
+python main.py '.\output\The_Best_Way_to_Learn_Linux\The Best Way to Learn Linux.webm' -s en -t ru -g male -w base --use-gpu
 ```
 
 With language options:
@@ -125,6 +135,27 @@ The script saves progress at each step:
 To force reprocessing, delete the corresponding files.
 
 ## Models and Voices
+
+### Model Downloads
+
+All models are automatically downloaded to the `models/` directory in your project folder when first used. This includes:
+- Whisper models (tiny, base, small, medium, large)
+- M2M100 translation models
+- NLLB translation models
+
+The models are downloaded only once and reused for subsequent runs. You can find them in:
+```
+models/
+├── whisper/          # Whisper transcription models
+├── m2m100/          # M2M100 translation models
+├── nllb/            # NLLB translation models
+└── rvc/             # RVC voice conversion models (if used)
+    ├── male/
+    │   └── ru/
+    │       ├── added_drevnyirus_v2.index
+    │       └── drevnyirus.pth
+    └── female/
+```
 
 ### Whisper Models
 
