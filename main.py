@@ -326,11 +326,25 @@ def transcribe_video(video_path, transcript_path, source_lang='en', model_size='
             # Write with timing
             f.write(f"[{seg['start']:.2f} - {seg['end']:.2f}] {text}\n")
     
+    # Also write to SRT format
+    srt_path = transcript_path.parent / "transcript.srt"
+    with open(srt_path, "w", encoding="utf-8") as f:
+        for i, seg in enumerate(processed_segments, 1):
+            start = seg['start']
+            end = seg['end']
+            text = seg['text'].strip()
+            text = ' '.join(text.split())
+            # Convert seconds to SRT time format (HH:MM:SS,mmm)
+            start_srt = f"{int(start // 3600):02d}:{int((start % 3600) // 60):02d}:{int(start % 60):02d},{int((start % 1) * 1000):03d}"
+            end_srt = f"{int(end // 3600):02d}:{int((end % 3600) // 60):02d}:{int(end % 60):02d},{int((end % 1) * 1000):03d}"
+            f.write(f"{i}\n{start_srt} --> {end_srt}\n{text}\n\n")
+    print(f"✅ Saved transcript SRT file to {srt_path}")
+    
     print(f"✅ Transcribed {len(processed_segments)} segments")
     return processed_segments
 
 # === 2. Text translation ===
-def translate_text(texts, output_path, source_lang='en', target_lang='ru', model_name='m2m100_418M'):
+def translate_text(texts, output_path, segments, source_lang='en', target_lang='zh', model_name='m2m100_418M'):
     try:
         from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
     except ImportError:
@@ -403,6 +417,19 @@ def translate_text(texts, output_path, source_lang='en', target_lang='ru', model
     with open(output_path, "w", encoding="utf-8") as f:
         for line in translations:
             f.write(line + "\n")
+    
+    # Also write to SRT format using timing from segments
+    srt_path = output_path.parent / "translated.srt"
+    with open(srt_path, "w", encoding="utf-8") as f:
+        for i, (seg, trans) in enumerate(zip(segments, translations), 1):
+            start = seg['start']
+            end = seg['end']
+            text = trans.strip()
+            # Convert seconds to SRT time format (HH:MM:SS,mmm)
+            start_srt = f"{int(start // 3600):02d}:{int((start % 3600) // 60):02d}:{int(start % 60):02d},{int((start % 1) * 1000):03d}"
+            end_srt = f"{int(end // 3600):02d}:{int((end % 3600) // 60):02d}:{int(end % 60):02d},{int((end % 1) * 1000):03d}"
+            f.write(f"{i}\n{start_srt} --> {end_srt}\n{text}\n\n")
+    print(f"✅ Saved translated SRT file to {srt_path}")
 
     print(f"✅ Translated {len(translations)} segments")
     return translations
@@ -552,7 +579,8 @@ def generate_tts_audio(text, output_path, lang='ru', use_rvc=True, voice_gender=
                     'pt': {'male': 'pt-BR-AntonioNeural', 'female': 'pt-BR-FranciscaNeural'},
                     'ja': {'male': 'ja-JP-NanjoNeural', 'female': 'ja-JP-AiriNeural'},
                     'ko': {'male': 'ko-KR-InJoonNeural', 'female': 'ko-KR-SunHiNeural'},
-                    'zh': {'male': 'zh-CN-YunxiNeural', 'female': 'zh-CN-XiaoxiaoNeural'}
+                    # 'zh': {'male': 'zh-CN-YunxiNeural', 'female': 'zh-CN-XiaoxiaoNeural'},
+                    'zh': {'male': 'zh-HK-WanLungNeural', 'female': 'zh-HK-HiuMaanNeural'},
                 }
                 
                 voice = voice_map.get(lang, {}).get(voice_gender, f"{lang}-{voice_gender.upper()}-Neural")
@@ -636,7 +664,7 @@ def replace_audio(video_path, audio_path, output_path):
     os.system(command)
 
 # === Main function ===
-def main(video_path, source_lang='en', target_lang='ru', use_rvc=True, voice_gender='female', rvc_model=None, whisper_model='base', translator_model='m2m100_418M', use_gpu=False):
+def main(video_path, source_lang='en', target_lang='zh', use_rvc=True, voice_gender='female', rvc_model=None, whisper_model='base', translator_model='m2m100_418M', use_gpu=False, transcript_only=False):
     check_ffmpeg()
 
     input_path = Path(video_path)
@@ -679,9 +707,20 @@ def main(video_path, source_lang='en', target_lang='ru', use_rvc=True, voice_gen
         print(f"⏩ Skipping translation — found file {translated_file}")
         with open(translated_file, "r", encoding="utf-8") as f:
             translations = [line.strip() for line in f.readlines()]
+        # Ensure translated.srt is generated even if translated.txt exists
+        srt_path = translated_file.parent / "translated.srt"
+        with open(srt_path, "w", encoding="utf-8") as f:
+            for i, (seg, trans) in enumerate(zip(segments, translations), 1):
+                start = seg['start']
+                end = seg['end']
+                text = trans.strip()
+                start_srt = f"{int(start // 3600):02d}:{int((start % 3600) // 60):02d}:{int(start % 60):02d},{int((start % 1) * 1000):03d}"
+                end_srt = f"{int(end // 3600):02d}:{int((end % 3600) // 60):02d}:{int(end % 60):02d},{int((end % 1) * 1000):03d}"
+                f.write(f"{i}\n{start_srt} --> {end_srt}\n{text}\n\n")
+        print(f"✅ Regenerated translated SRT file to {srt_path}")
     else:
         print("🌐 Translating text...")
-        translations = translate_text(texts, translated_file, source_lang, target_lang, translator_model)
+        translations = translate_text(texts, translated_file, segments, source_lang, target_lang, translator_model)
 
     # === TTS with timing ===
     expected_audio_files = [str(tts_chunks_dir / f"{base_name}_{i:04d}.mp3") for i in range(len(translations))]
@@ -722,18 +761,13 @@ def main(video_path, source_lang='en', target_lang='ru', use_rvc=True, voice_gen
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Translate video between different languages')
     parser.add_argument('video_path', help='Path to the video file to translate')
-    parser.add_argument('--source-lang', '-s', choices=SUPPORTED_LANGUAGES.keys(), default='en',
-                      help='Source language (default: en)')
-    parser.add_argument('--target-lang', '-t', choices=SUPPORTED_LANGUAGES.keys(), default='ru',
-                      help='Target language (default: ru)')
+    parser.add_argument('--source-lang', '-s', choices=SUPPORTED_LANGUAGES.keys(), default='en', help='Source language (default: en)')
+    parser.add_argument('--target-lang', '-t', choices=SUPPORTED_LANGUAGES.keys(), default='ru', help='Target language (default: ru)')
     parser.add_argument('--no-rvc', action='store_true', help='Disable RVC voice conversion')
-    parser.add_argument('--voice-gender', '-g', choices=['male', 'female'], default='female',
-                      help='Voice gender (default: female)')
+    parser.add_argument('--voice-gender', '-g', choices=['male', 'female'], default='female', help='Voice gender (default: female)')
     parser.add_argument('--rvc-model', '-m', help='Path to custom RVC model (optional)')
-    parser.add_argument('--whisper-model', '-w', choices=MODEL_CONFIG['whisper'].keys(), default='base',
-                      help='Whisper model size (default: base)')
-    parser.add_argument('--translator-model', '-tr', choices=MODEL_CONFIG['translator'].keys(), default='m2m100_418M',
-                      help='Translation model (default: m2m100_418M)')
+    parser.add_argument('--whisper-model', '-w', choices=MODEL_CONFIG['whisper'].keys(), default='base', help='Whisper model size (default: base)')
+    parser.add_argument('--translator-model', '-tr', choices=MODEL_CONFIG['translator'].keys(), default='m2m100_418M', help='Translation model (default: m2m100_418M)')
     parser.add_argument('--use-gpu', action='store_true', help='Use GPU for Whisper transcription')
     args = parser.parse_args()
     
